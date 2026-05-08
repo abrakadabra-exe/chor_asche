@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "554504151730",
+    "firebase_url": "https://chor-asche-d4691-default-rtdb.firebaseio.com",
+    "project_id": "chor-asche-d4691",
+    "storage_bucket": "chor-asche-d4691.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:554504151730:android:cecdc959302336661c5fab",
+        "android_client_info": {
+          "package_name": "com.abrawr.chor_asche"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhdBckTrqRxr15bwIWSS-SQbeWlK3BW80"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
