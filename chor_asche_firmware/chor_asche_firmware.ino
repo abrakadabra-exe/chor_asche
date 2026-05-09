@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════
-//  ESP32 Security System — Full Firmware v3
-//  Fixes: floating pin noise, sensor debounce,
-//         wailing siren, heartbeat, individual sensor tracking
+//  ESP32 Security System — Full Firmware v5
+//  Your settings: no entry delay, 5s cooldown,
+//  fast Firebase polling, count-based debounce
 //  ESP32 Arduino core v3.x compatible
 // ═══════════════════════════════════════════════════════════
 
@@ -20,17 +20,15 @@
 #define LED_ARMED           2
 
 // ── Timing constants ───────────────────────────────────────
-#define ENTRY_DELAY_MS      15000
-#define COOLDOWN_MS         10000
+#define ENTRY_DELAY_MS      0
+#define COOLDOWN_MS         5000
 #define SIREN_DURATION_MS   30000
 #define PWM_FREQ            3000
 #define PWM_RES             8
-#define FIREBASE_INTERVAL   2000
-#define HEARTBEAT_INTERVAL  10000
-
-// ── Debounce — sensor must be HIGH for this many consecutive
-//    readings before it counts as real motion ───────────────
-#define DEBOUNCE_COUNT      5
+#define FIREBASE_INTERVAL   1000
+#define HEARTBEAT_INTERVAL  5000
+#define DEBOUNCE_COUNT      3
+#define DEBOUNCE_TIME_MS    150   // signal must hold HIGH for 150ms
 
 // ── System states ──────────────────────────────────────────
 enum SystemState {
@@ -44,39 +42,60 @@ enum SystemState {
 // ── Global variables ───────────────────────────────────────
 SystemState    currentState      = DISARMED;
 unsigned long  stateEnteredAt    = 0;
-unsigned long  lastToneSwitch    = 0;
 unsigned long  lastFirebasePoll  = 0;
 unsigned long  lastHeartbeat     = 0;
 int            triggeredSensor   = 0;
 int            sirenStep         = 0;
 String         deviceToken       = "";
 
-// Debounce counters for each sensor
-int            pir1Count         = 0;
-int            pir2Count         = 0;
+// ── Debounce state ─────────────────────────────────────────
+unsigned long  pir1HighSince     = 0;
+unsigned long  pir2HighSince     = 0;
+bool           pir1Confirmed     = false;
+bool           pir2Confirmed     = false;
 
 FirebaseData   fbData;
 FirebaseAuth   fbAuth;
 FirebaseConfig fbConfig;
 
 // ── Debounced sensor reading ───────────────────────────────
-// Returns true only if sensor has been HIGH for DEBOUNCE_COUNT
-// consecutive readings — filters out floating pin noise
+// Signal must be HIGH for DEBOUNCE_TIME_MS continuously
+// Eliminates floating pin noise and single-loop spikes
 void readSensors(bool &motion1, bool &motion2) {
-  if (digitalRead(PIR1_PIN) == HIGH) {
-    pir1Count = min(pir1Count + 1, DEBOUNCE_COUNT + 1);
+  unsigned long now = millis();
+  bool raw1 = digitalRead(PIR1_PIN) == HIGH;
+  bool raw2 = digitalRead(PIR2_PIN) == HIGH;
+
+  // Sensor 1
+  if (raw1) {
+    if (pir1HighSince == 0) pir1HighSince = now;
+    if (now - pir1HighSince >= DEBOUNCE_TIME_MS) {
+      pir1Confirmed = true;
+    }
   } else {
-    pir1Count = max(pir1Count - 1, 0);
+    pir1HighSince = 0;
   }
 
-  if (digitalRead(PIR2_PIN) == HIGH) {
-    pir2Count = min(pir2Count + 1, DEBOUNCE_COUNT + 1);
+  // Sensor 2
+  if (raw2) {
+    if (pir2HighSince == 0) pir2HighSince = now;
+    if (now - pir2HighSince >= DEBOUNCE_TIME_MS) {
+      pir2Confirmed = true;
+    }
   } else {
-    pir2Count = max(pir2Count - 1, 0);
+    pir2HighSince = 0;
   }
 
-  motion1 = (pir1Count >= DEBOUNCE_COUNT);
-  motion2 = (pir2Count >= DEBOUNCE_COUNT);
+  motion1 = pir1Confirmed;
+  motion2 = pir2Confirmed;
+}
+
+// ── Reset debounce state ───────────────────────────────────
+void resetDebounce() {
+  pir1Confirmed = false;
+  pir2Confirmed = false;
+  pir1HighSince = 0;
+  pir2HighSince = 0;
 }
 
 // ── Buzzer helpers ─────────────────────────────────────────
@@ -92,6 +111,7 @@ void buzzOff() {
   ledcWriteTone(BUZ3_PIN, 0);
 }
 
+// ── Entry beep — only plays if ENTRY_DELAY_MS > 0 ─────────
 void entryBeep() {
   static unsigned long lastBeepOn = 0;
   static bool          beepState  = false;
@@ -106,7 +126,7 @@ void entryBeep() {
   }
 }
 
-// ── Wailing siren
+// ── Wailing siren — attack / hold / drop / silence ────────
 void updateSiren() {
   static unsigned long phaseStart = 0;
   static int           phase      = 0;
@@ -117,19 +137,17 @@ void updateSiren() {
 
   switch (phase) {
     case 0:
-      // ATTACK — sweep up from 800Hz to 3000Hz
       freq += 30;
       buzzOn(freq);
-      if (freq >= 3000) {
-        freq = 3000;
+      if (freq >= 4000) {
+        freq = 4000;
         phase = 1;
         phaseStart = now;
       }
       break;
 
     case 1:
-      // HOLD — scream at peak for 200ms
-      buzzOn(3000);
+      buzzOn(4000);
       if (elapsed >= 200) {
         phase = 2;
         phaseStart = now;
@@ -137,8 +155,7 @@ void updateSiren() {
       break;
 
     case 2:
-      // DROP — sweep down from 3000Hz to 800Hz
-      freq -= 30;
+      freq -= 40;
       buzzOn(freq);
       if (freq <= 800) {
         freq = 800;
@@ -148,7 +165,6 @@ void updateSiren() {
       break;
 
     case 3:
-      // SILENCE — 80ms gap before next cycle
       buzzOff();
       if (elapsed >= 80) {
         phase = 0;
@@ -257,7 +273,8 @@ void pollFirebase() {
     String token = fbData.stringData();
     if (token != "" && token != deviceToken) {
       deviceToken = token;
-      Serial.println("Device token updated: " + deviceToken.substring(0, 20) + "...");
+      Serial.println("Device token updated: " +
+                     deviceToken.substring(0, 20) + "...");
     }
   }
 
@@ -279,8 +296,7 @@ void pollFirebase() {
       setState(DISARMED);
       buzzOff();
       digitalWrite(LED_ARMED, LOW);
-      pir1Count = 0;
-      pir2Count = 0;
+      resetDebounce();
       Firebase.setBool(fbData, "/alarm/triggered",        false);
       Firebase.setBool(fbData, "/alarm/active_siren",     false);
       Firebase.setInt(fbData,  "/alarm/triggered_sensor", 0);
@@ -342,7 +358,6 @@ void loop() {
   bool motion2      = false;
 
   readSensors(motion1, motion2);
-
   bool anyMotion = motion1 || motion2;
 
   pollFirebase();
@@ -351,19 +366,34 @@ void loop() {
   switch (currentState) {
 
     case DISARMED:
+      resetDebounce();  // keep cleared while disarmed
       break;
 
     case ARMED:
       if (anyMotion) {
-        // Determine which sensor triggered
-        // If both fire simultaneously, sensor 1 takes priority
         triggeredSensor = motion1 ? 1 : 2;
-        Serial.print("Motion detected on sensor ");
+        resetDebounce();
+        Serial.print("Motion confirmed on sensor ");
         Serial.println(triggeredSensor);
-        setState(ENTRY_DELAY);
-        Firebase.setInt(fbData, "/alarm/triggered_sensor", triggeredSensor);
-        logEvent("Motion on sensor " + String(triggeredSensor) + " — entry delay started");
-        sendPushNotification("⚠️ Motion Detected", "Disarm within 15 seconds to cancel");
+
+        // With ENTRY_DELAY_MS = 0, goes straight to ALARMING
+        if (ENTRY_DELAY_MS == 0) {
+          setState(ALARMING);
+          Firebase.setInt(fbData, "/alarm/triggered_sensor", triggeredSensor);
+          syncStateToFirebase();
+          logEvent("ALARM triggered — sensor " + String(triggeredSensor));
+          sendPushNotification("🚨 ALARM TRIGGERED",
+                               "Motion on sensor " + String(triggeredSensor));
+        } else {
+          setState(ENTRY_DELAY);
+          Firebase.setInt(fbData, "/alarm/triggered_sensor", triggeredSensor);
+          logEvent("Motion on sensor " + String(triggeredSensor) +
+                   " — entry delay started");
+          sendPushNotification("⚠️ Motion Detected",
+                               "Disarm within " +
+                               String(ENTRY_DELAY_MS / 1000) +
+                               " seconds to cancel");
+        }
       }
       break;
 
@@ -375,7 +405,8 @@ void loop() {
         setState(ALARMING);
         syncStateToFirebase();
         logEvent("ALARM triggered — sensor " + String(triggeredSensor));
-        sendPushNotification("🚨 ALARM TRIGGERED", "Motion on sensor " + String(triggeredSensor));
+        sendPushNotification("🚨 ALARM TRIGGERED",
+                             "Motion on sensor " + String(triggeredSensor));
       }
       break;
 
@@ -386,17 +417,22 @@ void loop() {
         buzzOff();
         syncStateToFirebase();
         logEvent("Siren auto-silenced after 30s");
-        sendPushNotification("Security System", "Siren silenced — system still armed");
+        sendPushNotification("Security System",
+                             "Siren silenced — system still armed");
       }
       break;
 
     case SILENCED:
       if (anyMotion && (now - stateEnteredAt >= COOLDOWN_MS)) {
         triggeredSensor = motion1 ? 1 : 2;
-        setState(ENTRY_DELAY);
+        resetDebounce();
+        setState(ALARMING);
         Firebase.setInt(fbData, "/alarm/triggered_sensor", triggeredSensor);
-        logEvent("New motion after silence — sensor " + String(triggeredSensor));
-        sendPushNotification("⚠️ Motion Again", "New motion detected after silence");
+        syncStateToFirebase();
+        logEvent("New motion after silence — sensor " +
+                 String(triggeredSensor));
+        sendPushNotification("⚠️ Motion Again",
+                             "New motion detected after silence");
       }
       break;
   }
