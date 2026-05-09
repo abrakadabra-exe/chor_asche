@@ -92,7 +92,6 @@ void buzzOff() {
   ledcWriteTone(BUZ3_PIN, 0);
 }
 
-// ── Non-blocking entry beep ────────────────────────────────
 void entryBeep() {
   static unsigned long lastBeepOn = 0;
   static bool          beepState  = false;
@@ -107,7 +106,7 @@ void entryBeep() {
   }
 }
 
-// ── Wailing siren — attack / hold / drop / silence ────────
+// ── Wailing siren
 void updateSiren() {
   static unsigned long phaseStart = 0;
   static int           phase      = 0;
@@ -130,7 +129,7 @@ void updateSiren() {
 
     case 1:
       // HOLD — scream at peak for 200ms
-      buzzOn(4000);
+      buzzOn(3000);
       if (elapsed >= 200) {
         phase = 2;
         phaseStart = now;
@@ -138,8 +137,8 @@ void updateSiren() {
       break;
 
     case 2:
-      // DROP — sweep down from 4000Hz to 800Hz
-      freq -= 40;
+      // DROP — sweep down from 3000Hz to 800Hz
+      freq -= 30;
       buzzOn(freq);
       if (freq <= 800) {
         freq = 800;

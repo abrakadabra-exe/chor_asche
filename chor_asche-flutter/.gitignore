@@ -45,4 +45,4 @@ app.*.map.json
 /android/app/release
 
 # Platform risk ignores
-.gradle/, local.properties, *.keystore, *.jks
+.gradle/, local.properties, *.keystore, *.jks, .env*, lib/generated/

@@ -7,13 +7,6 @@ import 'screens/home_screen.dart';
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-// const AndroidNotificationChannel _channel = AndroidNotificationChannel(
-//   'security_channel',
-//   'Security Alerts',
-//   description: 'ESP32 security system alerts',
-//   importance: Importance.max,
-// );
-
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
@@ -25,10 +18,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void showLocalNotification(String title, String body) {
   flutterLocalNotificationsPlugin.show(
-    0,
-    title,
-    body,
-    const NotificationDetails(
+    id: 0,
+    title: title,
+    body: body,
+    notificationDetails: const NotificationDetails(
       android: AndroidNotificationDetails(
         'security_channel',
         'Security Alerts',
@@ -49,14 +42,11 @@ void main() async {
 
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
-  const AndroidInitializationSettings androidSettings =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-
   await flutterLocalNotificationsPlugin.initialize(
-    const InitializationSettings(android: androidSettings),
+    settings: const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+    ),
   );
-
-  
 
   runApp(const ChorAscheApp());
 }
@@ -70,9 +60,11 @@ class ChorAscheApp extends StatelessWidget {
       title: 'Chor Asche',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1A1A2E),
-          brightness: Brightness.dark,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFFFB8C00),
+          surface: Color(0xFF1E1E1E),
         ),
         useMaterial3: true,
       ),
